@@ -1,0 +1,214 @@
+---
+title: "Data Processing job"
+output: html_notebook
+---
+
+Dataset: Chicago Booth Kilts Center for marketing
+
+<https://www.chicagobooth.edu/-/media/enterprise/centers/kilts/datasets/dominicks-dataset/dominicks-manual-and-codebook_kiltscenter.aspx>
+
+```{r}
+library(tidyverse)
+library(pander)
+library(DataExplorer)
+library(ggplot2)
+library(data.table)
+```
+
+### Import Datafiles
+
+```{r}
+wber <- fread("~/KC Project/wber.csv",na.strings = "")
+head(wber)
+```
+
+```{r}
+wbat <- fread("~/KC Project/wbat.csv",na.strings = "")
+wbjc <- fread("~/KC Project/wbjc.csv",na.strings = "")
+wfec <- fread("~/KC Project/wfec.csv",na.strings = "")
+wfrj <- fread("~/KC Project/wfrj.csv",na.strings = "")
+wsdr <- fread("~/KC Project/wsdr.csv",na.strings = "")
+```
+
+### Exploratory Data Analysis - Data Understanding
+
+```{r}
+pander::pander(summary(wber))
+```
+
+```{r}
+introduce(wber)
+```
+
+```{r}
+plot_intro(wber)
+```
+
+### Creating Clean Dataset
+
+```{r}
+wber2 = filter(wber,OK == '1') #Remove errorneous datapoints
+wber2 = filter(wber,MOVE < 100)#Remove Outliers
+pander::pander(summary(wber2))
+```
+
+```{r}
+wbat2 = filter(wbat,OK == '1')#Remove errorneous datapoints
+wbjc2 = filter(wbjc,OK == '1')#Remove errorneous datapoints
+wfec2 = filter(wfec,OK == '1')#Remove errorneous datapoints
+wfrj2 = filter(wfrj,OK == '1')#Remove errorneous datapoints
+wsdr2 = filter(wsdr,OK == '1')#Remove errorneous datapoints
+
+#Selecting the relevant fields grouped by week & promo sale 
+wber2c = select(wber2,"WEEK","MOVE","PRICE","SALE")%>%
+  group_by(WEEK,SALE)%>%
+  summarise(SUM = sum(MOVE),PRICE = median(PRICE), N = n())
+
+wbat2 = select(wbat2,"WEEK","MOVE","PRICE","SALE")%>%
+  group_by(WEEK,SALE)%>%
+  summarise(SUM = sum(MOVE),PRICE = median(PRICE), N = n())
+
+wfec2 = select(wfec2,"WEEK","MOVE","PRICE","SALE")%>%
+  group_by(WEEK,SALE)%>%
+  summarise(SUM = sum(MOVE),PRICE = median(PRICE), N = n())
+
+wfrj2 = select(wfrj2,"WEEK","MOVE","PRICE","SALE")%>%
+  group_by(WEEK,SALE)%>%
+  summarise(SUM = sum(MOVE),PRICE = median(PRICE), N = n())
+
+wbjc2 = select(wbjc2,"WEEK","MOVE","PRICE","SALE")%>%
+  group_by(WEEK,SALE)%>%
+  summarise(SUM = sum(MOVE),PRICE = median(PRICE), N = n())
+
+wsdr2 = select(wsdr2,"WEEK","MOVE","PRICE","SALE")%>%
+  group_by(WEEK,SALE)%>%
+  summarise(SUM = sum(MOVE),PRICE = median(PRICE), N = n())
+```
+
+### Creating Dummy variables for promo
+
+```{r}
+#logic to create dummy variable for the various promotions
+
+
+wber2c$PROMO = ifelse(wber2c$SALE ==  "B"|wber2c$SALE ==  "C"|wber2c$SALE ==  "S" , 1, 0)
+wber2c$PROMO[is.na(wber2c$PROMO)] <- 0
+
+
+wbat2$PROMO = ifelse(wbat2$SALE ==  "B"|wbat2$SALE ==  "C"|wbat2$SALE ==  "S" , 1, 0)
+wbat2$PROMO[is.na(wbat2$PROMO)] <- 0
+
+
+wfec2$PROMO = ifelse(wfec2$SALE ==  "B"|wfec2$SALE ==  "C"|wfec2$SALE ==  "S" , 1, 0)
+wfec2$PROMO[is.na(wfec2$PROMO)] <- 0
+
+
+wbjc2$PROMO = ifelse(wbjc2$SALE ==  "B"|wbjc2$SALE ==  "C"|wbjc2$SALE ==  "S" , 1, 0)
+wbjc2$PROMO[is.na(wbjc2$PROMO)] <- 0
+
+
+wfrj2$PROMO = ifelse(wfrj2$SALE ==  "B"|wfrj2$SALE ==  "C"|wfrj2$SALE ==  "S" , 1, 0)
+wfrj2$PROMO[is.na(wfrj2$PROMO)] <- 0
+
+
+wsdr2$PROMO = ifelse(wsdr2$SALE ==  "B"|wsdr2$SALE ==  "C"|wsdr2$SALE ==  "S" , 1, 0)
+wsdr2$PROMO[is.na(wsdr2$PROMO)] <- 0
+```
+
+```{r}
+#Selecting variables and aggregating by week.
+
+wber2_promo = select(wber2c,"WEEK","SUM","PRICE","PROMO")%>%
+  group_by(WEEK)%>%
+  summarise(SUM = sum(SUM),PRICE = median(PRICE), N = n(), PROMO = max(PROMO))
+
+wbat2_promo = select(wbat2,"WEEK","SUM","PRICE","PROMO")%>%
+  group_by(WEEK)%>%
+  summarise(SUM = sum(SUM),PRICE = median(PRICE), N = n(), PROMO = max(PROMO))
+
+wfec2_promo = select(wfec2,"WEEK","SUM","PRICE","PROMO")%>%
+  group_by(WEEK)%>%
+  summarise(SUM = sum(SUM),PRICE = median(PRICE), N = n(), PROMO = max(PROMO))
+
+wfrj2_promo = select(wfrj2,"WEEK","SUM","PRICE","PROMO")%>%
+  group_by(WEEK)%>%
+  summarise(SUM = sum(SUM),PRICE = median(PRICE), N = n(), PROMO = max(PROMO))
+
+wbjc2_promo = select(wbjc2,"WEEK","SUM","PRICE","PROMO")%>%
+  group_by(WEEK)%>%
+  summarise(SUM = sum(SUM),PRICE = median(PRICE), N = n(), PROMO = max(PROMO))
+
+wsdr2_promo = select(wsdr2,"WEEK","SUM","PRICE","PROMO")%>%
+  group_by(WEEK)%>%
+  summarise(SUM = sum(SUM),PRICE = median(PRICE), N = n(), PROMO = max(PROMO))
+```
+
+#### Adding Categories
+
+```{r}
+wber2_promo$CATEGORY = "Beer"
+wbat2_promo$CATEGORY = "Bath Soap"
+wfec2_promo$CATEGORY = "FrontEnd Candies"
+wfrj2_promo$CATEGORY = "Frozen Juice"
+wbjc2_promo$CATEGORY = "Bottled Juice"
+wsdr2_promo$CATEGORY = "Soft Drink"
+
+```
+
+```{r}
+#final new product Table
+new_product_df=rbindlist(list(wber2_promo,
+wbat2_promo,
+wfec2_promo,
+wfrj2_promo,
+wbjc2_promo,
+wsdr2_promo))
+
+head(new_product_df)
+```
+
+### Creating Time Series Data
+
+#### Time Series for Product Table
+
+```{r}
+ISOWEEKS<- seq(from = ISOdate(1989,1,1), to = ISOdate(1996,8,24), by="week")
+YEARWEEK = strftime(ISOWEEKS,format="%Y-%W") 
+WEEK = seq(1,399,1)
+week_df = data.frame(WEEK)
+isoweek_df = data.frame(ISOWEEKS)
+yearweek_df = data.frame(YEARWEEK)
+product_ts = data.frame(WEEK)
+#product_ts$WEEK = week_df$WEEK
+product_ts$ISOWEEKS = isoweek_df$ISOWEEKS
+product_ts$YEARWEEK = yearweek_df$YEARWEEK
+head(product_ts)
+```
+
+#### New product Join
+
+```{r}
+#Joining timeseries with product
+product_ts_cmb2 = full_join(
+  product_ts,
+  new_product_df,
+  by = "WEEK"
+  
+)
+
+head(product_ts_cmb2)
+```
+
+```{r}
+colnames(product_ts_cmb2)
+```
+
+```{r}
+product_ts_cmb2 = select(product_ts_cmb2, "WEEK"  ,   "ISOWEEKS" ,"YEARWEEK", "SUM"   ,   "PRICE"   ,   "PROMO"  ,  "CATEGORY")
+```
+
+### EXPORT Processed file 2
+
+```{r}
+write.csv(product_ts_cmb2,"C:\\Users\\ifech\\Documents\\KC Project\\product_ts_full.csv", row.names = FALSE)
+```
