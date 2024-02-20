@@ -1,0 +1,338 @@
+---
+title: "Untitled"
+author: "GT Student"
+date: "1/2/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Environment Set-up
+
+```{r}
+#is_gluonts_activated()
+#get_python_env()
+#check_gluonts_dependencies()
+#detect_default_gluonts_env()
+```
+
+```{r}
+#remotes::install_github("business-science/modeltime.gluonts")
+#modeltime.gluonts::install_gluonts()
+```
+
+```{r}
+# GluonTS Installation - Run 1st time
+#modeltime.gluonts::install_gluonts(fresh_install = T, include_pytorch = F)
+
+```
+
+```{r}
+library(modeltime.gluonts)
+library(tidymodels)
+library(tidyverse)
+library(timetk)
+library(modeltime)
+library(lubridate)
+library(mice)
+```
+
+## Project
+
+```{r}
+product_ts_cmb = read.csv("product_ts_full.csv",na.strings = " ")
+product_ts_cmb$ISOWEEKS = as.Date(product_ts_cmb$ISOWEEKS)
+product_ts_cmb$CATEGORY = as.factor(product_ts_cmb$CATEGORY)
+head(product_ts_cmb)
+```
+
+```{r}
+
+data <- product_ts_cmb %>%
+  select(CATEGORY, ISOWEEKS,PRICE ,PROMO, SUM) %>%
+  group_by(CATEGORY) %>%
+  ungroup()
+```
+
+```{r}
+
+data %>%
+  group_by(CATEGORY) %>%
+  plot_time_series(
+    ISOWEEKS, 
+    SUM, 
+    .facet_ncol = 3, 
+    .interactive = FALSE
+  )
+```
+
+```{r}
+
+data %>%
+  group_by(CATEGORY) %>%
+  plot_time_series(
+    ISOWEEKS, 
+    PRICE, 
+    .facet_ncol = 3, 
+    .interactive = FALSE
+  )
+```
+
+```{r}
+HORIZON <- 52
+
+new_data <- data %>%
+  group_by(CATEGORY) %>%
+  future_frame(.length_out = HORIZON) %>%
+  ungroup()
+```
+
+## Data processing - Training and test
+
+```{r}
+#summary Stats
+pander::pander(summary(data))
+```
+
+#### Selecting Category for model training
+
+```{r}
+#input category
+filtereddata = filter(data,CATEGORY == 'FrontEnd Candies')
+#filtereddata = data
+```
+
+#### PMM Imputation
+
+```{r}
+
+#Replacing all zeroes to NA:
+filtereddata$SUM[filtereddata$SUM == 0] <- NA
+filtereddata$PRICE[filtereddata$PRICE == 0] <- NA
+imp <- mice(filtereddata,m=1,maxit=50,meth='pmm',seed=500)
+#get back the completed dataset
+filtereddata <- complete(imp,1)
+```
+
+```{r}
+pander::pander(summary(filtereddata))
+```
+
+```{r}
+print(acf(filtereddata$SUM,lag.max = 156))
+print(acf(filtereddata$PRICE,lag.max = 156))
+
+```
+
+### **Feature Engineering**
+
+```{r}
+
+recipe_spec <- recipe(SUM ~., filtereddata) %>%
+    step_timeseries_signature(ISOWEEKS) %>%
+    step_rm(matches("(iso$)|(xts$)|(day)|(hour)|(min)|(sec)|(am.pm)")) %>%
+    step_mutate(Date_week = factor(ISOWEEKS_week, ordered = TRUE)) %>%
+    step_lag(SUM, lag = 1, default=1) %>%
+    step_lag(PRICE, lag = 1, default=1) %>%
+    step_lag(PROMO, lag = 1, default=1) %>%
+    step_dummy(all_nominal(),keep_original_cols = T) %>%
+    step_normalize(contains("index.num"), ISOWEEKS_year) %>%
+    step_holiday_signature(ISOWEEKS,
+                           holiday_pattern = "^US_",
+                           locale_set      = "US"
+                           )
+
+recipe_spec %>% prep() %>% juice()
+
+```
+
+### Split and Settings
+
+```{r}
+splits<- time_series_split(
+filtereddata,
+assess = "2 weeks",#input forecast horizon
+cumulative = TRUE
+)
+
+
+splits %>%
+tk_time_series_cv_plan() %>%
+plot_time_series_cv_plan(ISOWEEKS, SUM, .interactive = T,.facet_ncol= 2,)
+
+
+#split settings
+future = nrow(testing(splits))+1
+```
+
+### Seed Settings
+
+```{r}
+mxnet <- reticulate::import("mxnet")
+mxnet$random$seed <- 123
+```
+
+#### Model 1: ARIMA
+
+```{r}
+# Model 1: auto_arima ----
+model_fit_arima_no_boost <- arima_reg() %>%
+    set_engine(engine = "auto_arima") %>%
+    fit(SUM ~ ., data = training(splits))
+```
+
+#### **Model 2: Exponential Smoothing**
+
+```{r}
+# Model 2 ets ----
+model_fit_ets <- exp_smoothing(
+  #seasonal_period  = 52,
+  error            = "multiplicative",
+  trend            = "additive",
+  season           = "multiplicative"
+  ) %>%
+    set_engine(engine = "ets") #%>%
+    #fit(SUM ~ ., data = training(splits))
+```
+
+#### **Model 3: Prophet**
+
+```{r}
+#prophet
+model_spec_prophet = prophet_reg(
+seasonality_weekly=TRUE,
+seasonality_yearly = F,
+season = "multiplicative"
+)
+```
+
+#### **Model 4: Random Forest**
+
+```{r}
+#random forest
+model_spec_rf <- rand_forest(mode = "regression",trees = 500, min_n = 50) %>%
+set_engine("randomForest")
+
+```
+
+#### **Model 5: DeepAR - LSTM**
+
+```{r}
+
+#deepar_lstm
+model_spec_deepar_lstm = deep_ar(
+id = "CATEGORY",
+freq = "W",
+prediction_length = future,
+lookback_length = 3*HORIZON,
+num_layers = 1,
+epochs = 5,
+scale = F
+) %>%
+set_engine("gluonts_deepar")
+```
+
+#### **Model 5C: DeepAR - GRU**
+
+```{r}
+#deepar_gru
+model_spec_deepar_gru = deep_ar(
+id = "CATEGORY",
+freq = "W",
+prediction_length = future,
+lookback_length = 3*HORIZON,
+num_layers = 1,
+epochs = 5,
+cell_type = "gru",
+scale = F
+) %>%
+set_engine("gluonts_deepar")
+
+```
+
+### **Fitted Workflow**
+
+```{r}
+
+#ARIMA
+#wflw_fit_arima_no_boost <- workflow() %>%
+#add_model(model_fit_arima_no_boost) %>%
+#add_recipe(recipe_spec %>% step_rm(all_nominal()) ) %>%
+#fit(training(splits))
+
+
+
+#ETS
+wflw_fit_ets <- workflow() %>%
+add_model(model_fit_ets) %>%
+add_recipe(recipe_spec) %>%
+fit(training(splits))
+
+
+#Prophet
+wflw_fit_prophet <- workflow() %>%
+add_model(model_spec_prophet) %>%
+add_recipe(recipe_spec) %>%
+fit(training(splits))
+
+#random forest
+workflow_fit_rf <- workflow() %>%
+add_model(model_spec_rf) %>%
+add_recipe(recipe_spec %>% step_rm("ISOWEEKS")) %>%
+fit(training(splits))
+
+#deepar_lstm
+wflw_fit_deepar_lstm <- workflow() %>%
+add_model(model_spec_deepar_lstm) %>%
+add_recipe(recipe_spec) %>%
+fit(training(splits))
+
+#deepar_gru
+wflw_fit_deepar_gru <- workflow() %>%
+add_model(model_spec_deepar_gru) %>%
+add_recipe(recipe_spec) %>%
+fit(training(splits))
+```
+
+**Sub Model Evaluation**
+
+```{r}
+
+submodels_tbl <- modeltime_table(
+
+#wflw_fit_arima_no_boost,
+model_fit_arima_no_boost,
+wflw_fit_ets,
+wflw_fit_prophet,
+wflw_fit_deepar_lstm,
+wflw_fit_deepar_gru,
+workflow_fit_rf
+)
+
+
+
+submodels_tbl %>%
+modeltime_accuracy(testing(splits)) %>%
+table_modeltime_accuracy(.interactive = FALSE)
+```
+
+```{r}
+
+submodels_tbl %>%
+modeltime_forecast(
+new_data = testing(splits),
+actual_data = filtereddata,
+keep_data = T
+) %>% group_by(CATEGORY) %>%
+plot_modeltime_forecast(
+.interactive = T,
+.facet_ncol = 2,
+.legend_max_width = 8)
+```
+
+### References
+
+1.  <https://business-science.github.io/modeltime.gluonts/articles/getting-started.html>
+2.  <https://business-science.github.io/modeltime.gluonts/reference/deep_ar.html>
